@@ -30,17 +30,29 @@ function stripMarkdownFences(text) {
     .trim();
 }
 
-const GEMINI_MODEL = 'gemini-3.5-flash';
+const GEMINI_MODELS = [
+  'gemini-3.6-flash',
+  'gemini-3.5-flash',
+  'gemini-2.5-flash',
+  'gemini-2.5-flash-lite'
+];
 
-// Base Fetch Wrapper for Gemini API — with retry on transient failures
+function isModelNotFound(status, message) {
+  const normalized = message.toLowerCase();
+  return (status === 404 || status === 400) && normalized.includes('model') && normalized.includes('not found');
+}
+
+function isInvalidApiKey(status, message) {
+  const normalized = message.toLowerCase();
+  return (status === 400 || status === 403) && normalized.includes('api key');
+}
+
+// Base Fetch Wrapper for Gemini API — with model fallback and retry on transient failures
 async function callGeminiAPI(prompt, jsonMode = true, retries = 2) {
-  const apiKey = getApiKey();
+  const apiKey = getApiKey().trim();
   if (!apiKey) {
     throw new Error('API_KEY_MISSING');
   }
-
-  // Gemini 2.0 Flash was shut down by Google; use the supported Flash model.
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
 
   const payload = {
     contents: [
@@ -56,69 +68,80 @@ async function callGeminiAPI(prompt, jsonMode = true, retries = 2) {
     }
   };
 
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    try {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(payload)
-      });
+  let lastModelError = null;
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        const errMsg = errorData?.error?.message || '';
-        console.error('Gemini API Error Response:', response.status, errMsg);
+  for (const model of GEMINI_MODELS) {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
 
-        if (response.status === 400 && errMsg.toLowerCase().includes('api key')) {
-          throw new Error('INVALID_API_KEY');
-        }
-        if (response.status === 404 && errMsg.toLowerCase().includes('model')) {
-          throw new Error('MODEL_NOT_FOUND');
-        }
-        if (response.status === 429 || response.status === 503) {
-          if (attempt < retries) {
-            // Exponential back-off: 1s, 2s
-            await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
-            continue;
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          const errMsg = errorData?.error?.message || '';
+          console.error('Gemini API Error Response:', response.status, errMsg);
+
+          if (isInvalidApiKey(response.status, errMsg)) {
+            throw new Error('INVALID_API_KEY');
           }
-          throw new Error('API_OVERLOADED');
+          if (isModelNotFound(response.status, errMsg)) {
+            lastModelError = errMsg;
+            break;
+          }
+          if (response.status === 429 || response.status === 503) {
+            if (attempt < retries) {
+              await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+              continue;
+            }
+            throw new Error('API_OVERLOADED');
+          }
+          throw new Error(`API_ERROR_${response.status}`);
         }
-        throw new Error(`API_ERROR_${response.status}`);
-      }
 
-      const data = await response.json();
-      const textContent = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        const data = await response.json();
+        const textContent = data.candidates?.[0]?.content?.parts?.[0]?.text;
 
-      if (!textContent) {
-        // Check for safety blocks
-        const finishReason = data.candidates?.[0]?.finishReason;
-        if (finishReason === 'SAFETY') throw new Error('SAFETY_BLOCK');
-        throw new Error('EMPTY_AI_RESPONSE');
-      }
-
-      if (jsonMode) {
-        try {
-          const cleaned = stripMarkdownFences(textContent);
-          return JSON.parse(cleaned);
-        } catch (parseErr) {
-          console.error('Failed to parse JSON from Gemini response:', textContent);
-          throw new Error('JSON_PARSE_ERROR');
+        if (!textContent) {
+          const finishReason = data.candidates?.[0]?.finishReason;
+          if (finishReason === 'SAFETY') throw new Error('SAFETY_BLOCK');
+          throw new Error('EMPTY_AI_RESPONSE');
         }
-      }
 
-      return textContent;
-    } catch (error) {
-      // Re-throw non-network errors immediately (don't retry)
-      if (!['API_OVERLOADED', 'ECONNRESET', 'ETIMEDOUT'].includes(error.message) || attempt >= retries) {
-        console.error('Gemini Service call failed:', error.message);
-        throw error;
+        if (jsonMode) {
+          try {
+            const cleaned = stripMarkdownFences(textContent);
+            return JSON.parse(cleaned);
+          } catch (parseErr) {
+            console.error('Failed to parse JSON from Gemini response:', textContent);
+            throw new Error('JSON_PARSE_ERROR');
+          }
+        }
+
+        return textContent;
+      } catch (error) {
+        if (!['ECONNRESET', 'ETIMEDOUT', 'TypeError'].includes(error.name) && !['ECONNRESET', 'ETIMEDOUT'].includes(error.message)) {
+          console.error('Gemini Service call failed:', error.message);
+          throw error;
+        }
+        if (attempt >= retries) {
+          console.error('Gemini Service call failed:', error.message);
+          throw new Error('NETWORK_ERROR');
+        }
+        await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
       }
     }
   }
-}
 
+  console.error('No configured Gemini model was available:', lastModelError || 'unknown model error');
+  throw new Error('MODEL_NOT_FOUND');
+}
 /**
  * 1. Resume Analyzer
  * Compares the candidate resume text against the target role and outputs structured feedback.
