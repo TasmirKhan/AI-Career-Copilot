@@ -179,6 +179,7 @@ export function renderGenerator(container, state, updateState, navigate) {
         difficulty,
         company,
         questions: finalQuestions,
+        maxQuestions: Math.min(limit, finalQuestions.length),
         currentQuestionIndex: 0,
         answers: [],
         codeSubmitted: false,
