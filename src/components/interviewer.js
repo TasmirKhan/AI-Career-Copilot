@@ -4,7 +4,7 @@ import { evaluateAnswer, generateFollowUpQuestion, generateFinalReport, getApiKe
 export function renderInterviewer(container, state, updateState, navigate) {
   const interview = state.activeInterview;
   const currentIdx = interview.currentQuestionIndex;
-  const totalLimit = interview.questions.length; // Max questions in configuration
+  const totalLimit = interview.maxQuestions || interview.questions.length; // Max questions in configuration
   const question = interview.questions[currentIdx];
   const roleData = roles[state.profile.roleKey] || roles.frontend;
   const resumeText = state.profile.resumeText || '';
@@ -469,8 +469,11 @@ export function renderInterviewer(container, state, updateState, navigate) {
           followUpQ = await generateFollowUpQuestion(question.question, text, gradingResult, resumeText, targetRole, 'technical');
         }
 
-        // Push follow up to questions list dynamically
-        interview.questions.push(followUpQ);
+        // Store the adaptive follow-up in the next configured slot without
+        // increasing the intended session length. Previously this appended on
+        // every technical answer, so the finish condition kept moving and the
+        // interview could never reach its final report button.
+        interview.questions[currentIdx + 1] = followUpQ;
         
         chatHistory.push({
           sender: 'ai',

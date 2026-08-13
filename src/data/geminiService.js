@@ -30,15 +30,17 @@ function stripMarkdownFences(text) {
     .trim();
 }
 
-// Base Fetch Wrapper for Gemini API — with retry on 503
+const GEMINI_MODEL = 'gemini-3.5-flash';
+
+// Base Fetch Wrapper for Gemini API — with retry on transient failures
 async function callGeminiAPI(prompt, jsonMode = true, retries = 2) {
   const apiKey = getApiKey();
   if (!apiKey) {
     throw new Error('API_KEY_MISSING');
   }
 
-  // Use gemini-2.0-flash for best availability and speed
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+  // Gemini 2.0 Flash was shut down by Google; use the supported Flash model.
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
 
   const payload = {
     contents: [
@@ -49,7 +51,6 @@ async function callGeminiAPI(prompt, jsonMode = true, retries = 2) {
       }
     ],
     generationConfig: {
-      temperature: 0.7,
       maxOutputTokens: 2048,
       ...(jsonMode ? { responseMimeType: 'application/json' } : {})
     }
@@ -72,6 +73,9 @@ async function callGeminiAPI(prompt, jsonMode = true, retries = 2) {
 
         if (response.status === 400 && errMsg.toLowerCase().includes('api key')) {
           throw new Error('INVALID_API_KEY');
+        }
+        if (response.status === 404 && errMsg.toLowerCase().includes('model')) {
+          throw new Error('MODEL_NOT_FOUND');
         }
         if (response.status === 429 || response.status === 503) {
           if (attempt < retries) {
