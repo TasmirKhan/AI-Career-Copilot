@@ -195,6 +195,8 @@ export function renderGenerator(container, state, updateState, navigate) {
         errorMsg = 'Gemini API Key is missing. Please go to Settings and paste your key.';
       } else if (err.message === 'INVALID_API_KEY') {
         errorMsg = 'Invalid API Key. Please verify your Gemini API Key in Settings.';
+      } else if (err.message === 'MODEL_NOT_FOUND') {
+        errorMsg = 'The configured Gemini model is unavailable. Please refresh the app and try again.';
       } else if (err.message === 'API_OVERLOADED') {
         errorMsg = 'Gemini API is overloaded right now. Please wait 30 seconds and try again.';
       } else if (err.message === 'JSON_PARSE_ERROR') {
