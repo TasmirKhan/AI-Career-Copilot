@@ -1,4 +1,4 @@
-import { roles, sampleResumes, defaultHistory } from './data/mockData.js';
+import { roles, defaultHistory } from './data/mockData.js';
 import { renderDashboard } from './components/dashboard.js';
 import { renderProfile } from './components/profile.js';
 import { renderGenerator } from './components/generator.js';
@@ -16,9 +16,9 @@ const state = {
     experience: '5',
     targetCompany: 'Google',
     skills: [...roles.frontend.skills],
-    resumeText: sampleResumes.frontend,
-    analyzed: true,
-    feedback: roles.frontend.resumeFeedback
+    resumeText: '',
+    analyzed: false,
+    feedback: null
   },
   activeInterview: null, 
   history: [...defaultHistory],
